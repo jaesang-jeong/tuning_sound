@@ -1,0 +1,12 @@
+{
+    "나만의 드림카 세팅": {
+        "engine_type": "V8 자연흡기 (머슬카)",
+        "displacement": 3000,
+        "cylinders": 6,
+        "compression": 10.5,
+        "idle_rpm": 800,
+        "exhaust_pitch": 200,
+        "resonance": 0.5,
+        "pop_and_bang": true
+    }
+}
