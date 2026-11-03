@@ -1,6 +1,7 @@
 """
-Supercar & Muscle Car Exhaust Sound Simulator & Tuning Cockpit (PySide6)
-Professional Desktop GUI for real-time acoustic tuning and CAN-bus driven exhaust sound synthesis.
+Supercar & Muscle Car Exhaust Sound Simulator & Cockpit (PySide6)
+Professional Desktop GUI with Cockpit (Cabin) Interior & Exterior Views,
+Intake Induction Roar, and GTA / Real-Game 3D Stereo Spatial Audio.
 """
 
 import sys
@@ -89,17 +90,22 @@ class WaveformWidget(QFrame):
 
 class ModernTachometer(QWidget):
     """Digital Tachometer & Cockpit Gauge Display."""
-    def __init__(self, max_rpm=9000, parent=None):
+    def __init__(self, max_rpm=6800, parent=None):
         super().__init__(parent)
         self.rpm = 780.0
         self.max_rpm = max_rpm
         self.speed = 0.0
         self.gear = 1
         self.throttle = 0.0
+        self.perspective = "exterior"
         self.setMinimumHeight(160)
 
     def set_max_rpm(self, max_rpm: float):
         self.max_rpm = max_rpm
+        self.update()
+
+    def set_perspective(self, perspective: str):
+        self.perspective = perspective
         self.update()
 
     def set_data(self, rpm: float, throttle: float, speed: float, gear: int):
@@ -155,6 +161,13 @@ class ModernTachometer(QWidget):
         painter.setPen(QColor(150, 160, 180))
         painter.drawText(390, 56, f"부하(Load): {int(self.throttle * 100)}%")
 
+        # Perspective status tag
+        persp_text = "💺 운전석 실내 (Cabin)" if self.perspective == "cabin" else "🏎️ 실외 배기구 (Exterior)"
+        persp_col = QColor(168, 85, 247) if self.perspective == "cabin" else QColor(34, 197, 94)
+        painter.setFont(QFont("Arial", 11, QFont.Bold))
+        painter.setPen(persp_col)
+        painter.drawText(560, 56, persp_text)
+
         # Dynamic Colored Tachometer Arc Bar
         bar_x = 24
         bar_y = 105
@@ -189,8 +202,8 @@ class ExhaustAppWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Supercar & Muscle Car Exhaust Sound Simulator & Cockpit (1단계 PC)")
-        self.resize(1100, 850)
-        self.setMinimumSize(980, 780)
+        self.resize(1120, 890)
+        self.setMinimumSize(1000, 800)
 
         # Initialize DSP, CAN & Presets
         self.synth = ExhaustSoundSynthesizer(sample_rate=44100, buffer_size=1024)
@@ -199,8 +212,8 @@ class ExhaustAppWindow(QMainWindow):
         self.can_rx = CanReceiver()
 
         # State
-        self.current_mode = "TUNING"  # "TUNING" or "DRIVE"
-        self.drive_source = "SIMULATOR"  # "SIMULATOR" or "CAN"
+        self.current_mode = "TUNING"
+        self.drive_source = "SIMULATOR"
 
         self._init_ui()
         self._apply_dark_theme()
@@ -224,7 +237,7 @@ class ExhaustAppWindow(QMainWindow):
         main_layout.setContentsMargins(18, 18, 18, 18)
         main_layout.setSpacing(14)
 
-        # 1. Top Header Bar (Global Sound & Master Volume)
+        # 1. Top Header Bar (Global Sound, Master Volume & Perspective Toggle)
         header_frame = QFrame()
         header_frame.setStyleSheet("background-color: #171b22; border: 1px solid #2a313d; border-radius: 8px; padding: 6px;")
         header_layout = QHBoxLayout(header_frame)
@@ -232,29 +245,53 @@ class ExhaustAppWindow(QMainWindow):
         self.btn_sound_toggle = QPushButton("🔊 사운드 엔진 ON")
         self.btn_sound_toggle.setCheckable(True)
         self.btn_sound_toggle.setStyleSheet("""
-            QPushButton { background-color: #00875a; color: white; font-weight: bold; font-size: 14px; padding: 10px 20px; border-radius: 6px; }
+            QPushButton { background-color: #00875a; color: white; font-weight: bold; font-size: 13px; padding: 8px 16px; border-radius: 6px; }
             QPushButton:!checked { background-color: #4b5563; }
         """)
+
+        # Perspective Switcher (실외 배기구 vs 운전석 실내)
+        persp_label = QLabel("청음 관점:")
+        persp_label.setFont(QFont("Arial", 11, QFont.Bold))
+        self.btn_persp_exterior = QPushButton("🏎️ 실외 배기구 (Exterior)")
+        self.btn_persp_exterior.setCheckable(True)
+        self.btn_persp_exterior.setChecked(True)
+        self.btn_persp_exterior.setStyleSheet("""
+            QPushButton { background-color: #059669; color: white; font-weight: bold; padding: 8px 14px; border-radius: 6px; font-size: 12px; }
+            QPushButton:!checked { background-color: #27272a; color: #9ca3af; }
+        """)
+
+        self.btn_persp_cabin = QPushButton("💺 운전석 실내 (Cockpit Cabin)")
+        self.btn_persp_cabin.setCheckable(True)
+        self.btn_persp_cabin.setStyleSheet("""
+            QPushButton { background-color: #8b5cf6; color: white; font-weight: bold; padding: 8px 14px; border-radius: 6px; font-size: 12px; }
+            QPushButton:!checked { background-color: #27272a; color: #9ca3af; }
+        """)
+
+        self.btn_persp_exterior.clicked.connect(lambda: self._set_perspective("exterior"))
+        self.btn_persp_cabin.clicked.connect(lambda: self._set_perspective("cabin"))
 
         vol_label = QLabel("마스터 볼륨:")
         vol_label.setFont(QFont("Arial", 11, QFont.Bold))
         self.vol_slider = QSlider(Qt.Horizontal)
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(90)
-        self.vol_slider.setFixedWidth(160)
+        self.vol_slider.setFixedWidth(130)
         self.lbl_vol_val = QLabel("90%")
-        self.lbl_vol_val.setFixedWidth(45)
+        self.lbl_vol_val.setFixedWidth(40)
 
         self.lbl_model_badge = QLabel("아메리칸 머슬카 V8 (6.2L Supercharged)")
-        self.lbl_model_badge.setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 15px; background-color: #0d2838; padding: 6px 14px; border-radius: 6px; border: 1px solid #00a0b0;")
+        self.lbl_model_badge.setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 14px; background-color: #0d2838; padding: 6px 12px; border-radius: 6px; border: 1px solid #00a0b0;")
 
         header_layout.addWidget(self.btn_sound_toggle)
-        header_layout.addSpacing(20)
+        header_layout.addSpacing(15)
+        header_layout.addWidget(persp_label)
+        header_layout.addWidget(self.btn_persp_exterior)
+        header_layout.addWidget(self.btn_persp_cabin)
+        header_layout.addSpacing(15)
         header_layout.addWidget(vol_label)
         header_layout.addWidget(self.vol_slider)
         header_layout.addWidget(self.lbl_vol_val)
         header_layout.addStretch()
-        header_layout.addWidget(QLabel("현재 엔진 모델:"))
         header_layout.addWidget(self.lbl_model_badge)
 
         main_layout.addWidget(header_frame)
@@ -291,8 +328,8 @@ class ExhaustAppWindow(QMainWindow):
 
     def _build_tuning_tab(self):
         layout = QVBoxLayout(self.tab_tuning)
-        layout.setSpacing(14)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        layout.setContentsMargins(14, 14, 14, 14)
 
         # Top Row: Preset Selection & Quick Switch Buttons
         preset_box = QGroupBox("슈퍼카 & 머슬카 프리셋 선택 & 관리")
@@ -329,7 +366,7 @@ class ExhaustAppWindow(QMainWindow):
         ]
         for name, color in quick_cars:
             btn = QPushButton(f"⚡ {name}")
-            btn.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold; padding: 8px 10px; border-radius: 6px; font-size: 11px;")
+            btn.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold; padding: 7px 10px; border-radius: 6px; font-size: 11px;")
             btn.clicked.connect(lambda checked=False, n=name: self.load_preset_to_ui(n))
             quick_layout.addWidget(btn)
         layout.addLayout(quick_layout)
@@ -367,7 +404,7 @@ class ExhaustAppWindow(QMainWindow):
         # Dynamic Pedal Button
         self.btn_pedal = QPushButton("🏎️ 가상 가속 페달 (누르고 있으면 풀악셀 급상승, 떼면 팝앤뱅/백파이어 폭발!)")
         self.btn_pedal.setStyleSheet("""
-            QPushButton { background-color: #2563eb; color: white; font-weight: bold; font-size: 14px; padding: 14px; border-radius: 8px; }
+            QPushButton { background-color: #2563eb; color: white; font-weight: bold; font-size: 14px; padding: 12px; border-radius: 8px; }
             QPushButton:pressed { background-color: #ef4444; }
         """)
         self.btn_pedal.pressed.connect(self._on_pedal_down)
@@ -376,11 +413,11 @@ class ExhaustAppWindow(QMainWindow):
 
         layout.addLayout(control_grid)
 
-        # Bottom: Detailed Acoustic Parameters (EQ, Valve, Pops, Supercharger)
-        tuning_params_box = QGroupBox("배기음 물리/음향 파라미터 세부 튜닝")
+        # Bottom: Detailed Acoustic Parameters (EQ, 3D Spatial, Intake Roar, Chassis)
+        tuning_params_box = QGroupBox("배기음 물리/음향 & GTA 실사 3D 공간 음향 세부 튜닝")
         t_layout = QGridLayout(tuning_params_box)
 
-        # Bass Boost
+        # EQ Low / Mid / High
         t_layout.addWidget(QLabel("저음 서브 럼블 (Bass Rumble):"), 0, 0)
         self.slider_bass = QSlider(Qt.Horizontal)
         self.slider_bass.setRange(20, 300)
@@ -389,16 +426,14 @@ class ExhaustAppWindow(QMainWindow):
         t_layout.addWidget(self.slider_bass, 0, 1)
         t_layout.addWidget(self.lbl_bass_disp, 0, 2)
 
-        # Mid Punch
         t_layout.addWidget(QLabel("중음 배기 맥동 (Mid Body):"), 1, 0)
         self.slider_mid = QSlider(Qt.Horizontal)
         self.slider_mid.setRange(20, 250)
         self.slider_mid.setValue(130)
         self.lbl_mid_disp = QLabel("1.3x")
         t_layout.addWidget(self.slider_mid, 1, 1)
-        t_layout.addWidget(self.lbl_mid_disp, 1, 2)
+        t_layout.addWidget(self.lbl_mid_disp, 0, 2)
 
-        # Treble Scream
         t_layout.addWidget(QLabel("고음 비명 / 밸브 (High Screamer):"), 2, 0)
         self.slider_treble = QSlider(Qt.Horizontal)
         self.slider_treble.setRange(20, 250)
@@ -407,8 +442,33 @@ class ExhaustAppWindow(QMainWindow):
         t_layout.addWidget(self.slider_treble, 2, 1)
         t_layout.addWidget(self.lbl_treble_disp, 2, 2)
 
-        # Raspy Distortion
-        t_layout.addWidget(QLabel("배기관 거친 질감 (Raspy Saturation):"), 3, 0)
+        # 3D Game & Cabin Special Controls
+        t_layout.addWidget(QLabel("흡기 인덕션 로어 (Intake Roar):"), 0, 3)
+        self.slider_intake = QSlider(Qt.Horizontal)
+        self.slider_intake.setRange(0, 250)
+        self.slider_intake.setValue(120)
+        self.lbl_intake_disp = QLabel("1.2x")
+        t_layout.addWidget(self.slider_intake, 0, 4)
+        t_layout.addWidget(self.lbl_intake_disp, 0, 5)
+
+        t_layout.addWidget(QLabel("GTA 3D 스테레오 입체폭 (Stereo Width):"), 1, 3)
+        self.slider_stereo = QSlider(Qt.Horizontal)
+        self.slider_stereo.setRange(0, 200)
+        self.slider_stereo.setValue(130)
+        self.lbl_stereo_disp = QLabel("1.3x")
+        t_layout.addWidget(self.slider_stereo, 1, 4)
+        t_layout.addWidget(self.lbl_stereo_disp, 1, 5)
+
+        t_layout.addWidget(QLabel("실내 섀시 진동 붐 (Chassis Boom):"), 2, 3)
+        self.slider_chassis = QSlider(Qt.Horizontal)
+        self.slider_chassis.setRange(0, 250)
+        self.slider_chassis.setValue(140)
+        self.lbl_chassis_disp = QLabel("1.4x")
+        t_layout.addWidget(self.slider_chassis, 2, 4)
+        t_layout.addWidget(self.lbl_chassis_disp, 2, 5)
+
+        # Toggles: Valve, Pop and Bang, Supercharger Whine, Saturation
+        t_layout.addWidget(QLabel("배기관 거친 질감 (Saturation):"), 3, 0)
         self.slider_dist = QSlider(Qt.Horizontal)
         self.slider_dist.setRange(0, 100)
         self.slider_dist.setValue(45)
@@ -416,9 +476,8 @@ class ExhaustAppWindow(QMainWindow):
         t_layout.addWidget(self.slider_dist, 3, 1)
         t_layout.addWidget(self.lbl_dist_disp, 3, 2)
 
-        # Toggles: Valve, Pop and Bang, Supercharger Whine
         toggles_layout = QHBoxLayout()
-        self.chk_valve = QCheckBox("가변 배기 밸브 OPEN (Loud / Sport Corsa)")
+        self.chk_valve = QCheckBox("가변 배기 밸브 OPEN")
         self.chk_valve.setChecked(True)
         self.chk_valve.setFont(QFont("Arial", 10, QFont.Bold))
 
@@ -433,7 +492,7 @@ class ExhaustAppWindow(QMainWindow):
         self.slider_pop_intensity = QSlider(Qt.Horizontal)
         self.slider_pop_intensity.setRange(0, 250)
         self.slider_pop_intensity.setValue(150)
-        self.slider_pop_intensity.setFixedWidth(100)
+        self.slider_pop_intensity.setFixedWidth(90)
 
         toggles_layout.addWidget(self.chk_valve)
         toggles_layout.addSpacing(15)
@@ -444,7 +503,7 @@ class ExhaustAppWindow(QMainWindow):
         toggles_layout.addWidget(self.slider_pop_intensity)
         toggles_layout.addStretch()
 
-        t_layout.addLayout(toggles_layout, 4, 0, 1, 3)
+        t_layout.addLayout(toggles_layout, 3, 3, 1, 3)
         layout.addWidget(tuning_params_box)
 
     def _build_drive_tab(self):
@@ -654,6 +713,9 @@ class ExhaustAppWindow(QMainWindow):
         self.slider_mid.valueChanged.connect(self._on_acoustic_params_changed)
         self.slider_treble.valueChanged.connect(self._on_acoustic_params_changed)
         self.slider_dist.valueChanged.connect(self._on_acoustic_params_changed)
+        self.slider_intake.valueChanged.connect(self._on_acoustic_params_changed)
+        self.slider_stereo.valueChanged.connect(self._on_acoustic_params_changed)
+        self.slider_chassis.valueChanged.connect(self._on_acoustic_params_changed)
         self.chk_valve.toggled.connect(self._on_acoustic_params_changed)
         self.chk_supercharger.toggled.connect(self._on_acoustic_params_changed)
         self.chk_pop.toggled.connect(self._on_acoustic_params_changed)
@@ -672,6 +734,17 @@ class ExhaustAppWindow(QMainWindow):
 
         # Simulator callback
         self.sim.start(self._on_sim_physics_tick)
+
+    def _set_perspective(self, perspective: str):
+        if perspective == "exterior":
+            self.btn_persp_exterior.setChecked(True)
+            self.btn_persp_cabin.setChecked(False)
+        else:
+            self.btn_persp_exterior.setChecked(False)
+            self.btn_persp_cabin.setChecked(True)
+
+        self.synth.set_perspective(perspective)
+        self.tachometer.set_perspective(perspective)
 
     def _set_drive_source(self, source: str):
         self.drive_source = source
@@ -761,6 +834,9 @@ class ExhaustAppWindow(QMainWindow):
         mid = self.slider_mid.value() / 100.0
         treble = self.slider_treble.value() / 100.0
         dist = self.slider_dist.value() / 100.0
+        intake = self.slider_intake.value() / 100.0
+        stereo = self.slider_stereo.value() / 100.0
+        chassis = self.slider_chassis.value() / 100.0
         pop_int = self.slider_pop_intensity.value() / 100.0
         valve = self.chk_valve.isChecked()
         sc = self.chk_supercharger.isChecked()
@@ -770,6 +846,9 @@ class ExhaustAppWindow(QMainWindow):
         self.lbl_mid_disp.setText(f"{mid:.1f}x")
         self.lbl_treble_disp.setText(f"{treble:.1f}x")
         self.lbl_dist_disp.setText(f"{int(dist * 100)}%")
+        self.lbl_intake_disp.setText(f"{intake:.1f}x")
+        self.lbl_stereo_disp.setText(f"{stereo:.1f}x")
+        self.lbl_chassis_disp.setText(f"{chassis:.1f}x")
 
         self.synth.set_tuning(
             bass=bass,
@@ -780,6 +859,9 @@ class ExhaustAppWindow(QMainWindow):
             supercharger=sc,
             pop_enabled=pop_en,
             pop_intensity=pop_int,
+            intake_roar=intake,
+            stereo_width=stereo,
+            chassis_vibe=chassis,
         )
 
     def load_preset_to_ui(self, preset_name: str):
@@ -795,10 +877,17 @@ class ExhaustAppWindow(QMainWindow):
         self.slider_rpm.setMaximum(int(max_rpm))
         self.slider_rpm.setValue(int(preset.get("idle_rpm", 780)))
 
+        # Perspective
+        persp = preset.get("perspective", "exterior")
+        self._set_perspective(persp)
+
         self.slider_bass.setValue(int(preset.get("bass_boost", 1.5) * 100))
         self.slider_mid.setValue(int(preset.get("mid_punch", 1.2) * 100))
         self.slider_treble.setValue(int(preset.get("treble_scream", 1.0) * 100))
         self.slider_dist.setValue(int(preset.get("distortion", 0.45) * 100))
+        self.slider_intake.setValue(int(preset.get("intake_roar", 1.2) * 100))
+        self.slider_stereo.setValue(int(preset.get("stereo_width", 1.3) * 100))
+        self.slider_chassis.setValue(int(preset.get("chassis_vibe", 1.4) * 100))
         self.chk_valve.setChecked(preset.get("valve_open", True))
         self.chk_supercharger.setChecked(preset.get("supercharger", (model_key == "muscle_v8")))
         self.chk_pop.setChecked(preset.get("pop_and_bang", True))
@@ -827,9 +916,13 @@ class ExhaustAppWindow(QMainWindow):
             "idle_rpm": int(self.synth.current_model.idle_rpm),
             "max_rpm": int(self.synth.current_model.redline_rpm),
             "cylinders": self.synth.current_model.cylinders,
+            "perspective": self.synth.perspective,
             "bass_boost": self.slider_bass.value() / 100.0,
             "mid_punch": self.slider_mid.value() / 100.0,
             "treble_scream": self.slider_treble.value() / 100.0,
+            "intake_roar": self.slider_intake.value() / 100.0,
+            "stereo_width": self.slider_stereo.value() / 100.0,
+            "chassis_vibe": self.slider_chassis.value() / 100.0,
             "valve_open": self.chk_valve.isChecked(),
             "supercharger": self.chk_supercharger.isChecked(),
             "pop_and_bang": self.chk_pop.isChecked(),

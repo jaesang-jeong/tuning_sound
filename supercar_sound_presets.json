@@ -13,6 +13,10 @@
         "pop_intensity": 1.5,
         "distortion": 0.45,
         "supercharger": true,
+        "perspective": "exterior",
+        "intake_roar": 1.2,
+        "stereo_width": 1.3,
+        "chassis_vibe": 1.4,
         "master_volume": 0.9
     },
     "포르쉐 911 GT3 (Flat-6)": {
@@ -29,6 +33,10 @@
         "pop_intensity": 1.2,
         "distortion": 0.5,
         "supercharger": false,
+        "perspective": "exterior",
+        "intake_roar": 1.3,
+        "stereo_width": 1.2,
+        "chassis_vibe": 1.0,
         "master_volume": 0.85
     },
     "페라리 F8 / 458 (Flat-plane V8)": {
@@ -45,6 +53,10 @@
         "pop_intensity": 1.1,
         "distortion": 0.4,
         "supercharger": false,
+        "perspective": "exterior",
+        "intake_roar": 1.4,
+        "stereo_width": 1.3,
+        "chassis_vibe": 0.9,
         "master_volume": 0.85
     },
     "마세라티 그란투리스모 (Cross-plane V8)": {
@@ -61,6 +73,10 @@
         "pop_intensity": 1.6,
         "distortion": 0.55,
         "supercharger": false,
+        "perspective": "exterior",
+        "intake_roar": 1.2,
+        "stereo_width": 1.2,
+        "chassis_vibe": 1.3,
         "master_volume": 0.9
     },
     "람보르기니 우라칸 (V10)": {
@@ -77,6 +93,10 @@
         "pop_intensity": 1.4,
         "distortion": 0.5,
         "supercharger": false,
+        "perspective": "exterior",
+        "intake_roar": 1.4,
+        "stereo_width": 1.3,
+        "chassis_vibe": 1.1,
         "master_volume": 0.88
     }
 }

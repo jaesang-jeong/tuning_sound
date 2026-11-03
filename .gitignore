@@ -5,3 +5,4 @@ __pycache__/
 .vscode/
 .idea/
 scratch_test_realistic_dsp.py
+scratch_test_cabin.py
