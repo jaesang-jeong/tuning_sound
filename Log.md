@@ -61,3 +61,16 @@
    - `python -c "from headless_engine import ...; test_sweep=True"` → 벤치 시뮬레이션 RPM 스윕 모드 정상 동작 확인
 3. 미해결 / 제안:
    - 라즈베리파이 3B에 라즈베리파이 OS 설치 후 `bash setup_rpi.sh` 실행 권장
+
+
+## 2026-11-07 05:04 — 라즈베리파이 3B 원본 환경 복구 스크립트(revert_rpi.sh) 작성
+
+[DONE]
+1. 수정 파일:
+   - revert_rpi.sh : 전체 : systemd 서비스 정지 및 삭제, can0 네트워크 설정 복원, 파이썬/시스템 패키지 정리 스크립트 작성
+   - setup_rpi.sh : 안내문 : 복구 명령어 가이드 추가
+2. 검증:
+   - `bash -n revert_rpi.sh` (구문 검증) 및 파일 생성 확인 완료
+   - Git 커밋 `6721672` 원격 저장소 푸시 완료
+3. 미해결 / 제안:
+   - 없음
