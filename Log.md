@@ -44,3 +44,20 @@
    - `python -m py_compile pcan_manager.py app_gui.py` → 정상 컴파일 확인
 3. 미해결 / 제안:
    - 없음
+
+
+## 2026-11-06 21:34 — 라즈베리파이 3B 독립 장치 이식 (헤드리스 데몬 & systemd 서비스)
+
+[DONE]
+1. 수정 파일:
+   - pcan_manager.py : `connect` : 리눅스/라즈베리파이 커널 내장 SocketCAN(can0) 자동 감지 및 크로스 플랫폼 연결 지원
+   - headless_engine.py : 전체 : 라즈베리파이 3B용 경량 헤드리스 사운드 실행 데몬 구현
+   - config_standalone.json : 전체 : 독립 장치 자동 부팅 시 적용할 사운드 모델/차종 프리셋 설정 파일 생성
+   - tuning_sound.service : 전체 : 차량 시동 시 자동 실행 systemd 서비스 유닛 파일 생성
+   - setup_rpi.sh : 전체 : 라즈베리파이 OS 환경 패키지 설치 및 SocketCAN 500k 원클릭 설정 스크립트 작성
+2. 검증:
+   - `python -m py_compile headless_engine.py pcan_manager.py` → 정상 컴파일 확인
+   - `python -c "from headless_engine import HeadlessExhaustDaemon, load_config; ..."` → 헤드리스 데몬 시작, 오디오 스트림 오픈, CAN 대기, 종료 루틴 정상 확인
+   - `python -c "from headless_engine import ...; test_sweep=True"` → 벤치 시뮬레이션 RPM 스윕 모드 정상 동작 확인
+3. 미해결 / 제안:
+   - 라즈베리파이 3B에 라즈베리파이 OS 설치 후 `bash setup_rpi.sh` 실행 권장
