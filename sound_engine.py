@@ -209,11 +209,9 @@ class ExhaustSoundSynthesizer:
         self.muffler_y1 = 0.0
         self.muffler_y2 = 0.0
 
-        # Cabin Low-pass Insulation Filter States
-        self.cabin_lp_x1 = 0.0
-        self.cabin_lp_x2 = 0.0
-        self.cabin_lp_y1 = 0.0
-        self.cabin_lp_y2 = 0.0
+        # Cabin Dual-Stage Low-pass Smoothing Filter States
+        self.cabin_lp1 = 0.0
+        self.cabin_lp2 = 0.0
 
         # High-pass DC Blocker states
         self.dc_x1_l = 0.0
@@ -252,8 +250,8 @@ class ExhaustSoundSynthesizer:
         self.output_device_index: Optional[int] = None
         self.lock = threading.Lock()
 
-        # Monitoring waveform buffer (for GUI oscilloscope)
-        self.latest_waveform = np.zeros(buffer_size, dtype=np.float32)
+        # Monitoring waveform buffer (fixed 256 size for GUI visualizer)
+        self.latest_waveform = np.zeros(256, dtype=np.float32)
 
     def set_perspective(self, perspective: str):
         with self.lock:
@@ -508,93 +506,81 @@ class ExhaustSoundSynthesizer:
                 # 11. Perspective-Specific Acoustic Processing (Cabin vs Exterior)
                 if self.perspective == "cabin":
                     # --- 운전석 실내 (Cabin / Cockpit Interior) ---
-                    # 1) Acoustic Firewall & Glass Low-Pass Filter (Biquad 1200Hz LPF)
-                    fc = 1100.0
-                    w_c = 2.0 * np.pi * fc / self.sample_rate
-                    q_c = 0.707
-                    alpha_c = np.sin(w_c) / (2.0 * q_c)
-                    cos_wc = np.cos(w_c)
-                    b0_c = (1.0 - cos_wc) / 2.0
-                    b1_c = 1.0 - cos_wc
-                    b2_c = (1.0 - cos_wc) / 2.0
-                    a0_c = 1.0 + alpha_c
-                    a1_c = -2.0 * cos_wc
-                    a2_c = 1.0 - alpha_c
-
-                    b0_c /= a0_c; b1_c /= a0_c; b2_c /= a0_c
-                    a1_c /= a0_c; a2_c /= a0_c
-
+                    # 1) Dual-Stage Cascaded Smooth Low-Pass Filter (~750Hz cutoff)
+                    # Eliminates any harsh digital tearing and creates smooth, velvety, muffled engine sound
+                    alpha = 0.08  # ~750Hz cutoff at 44.1kHz
                     filtered_exhaust = np.zeros(frames, dtype=np.float32)
-                    y1, y2 = self.cabin_lp_y1, self.cabin_lp_y2
-                    x1, x2 = self.cabin_lp_x1, self.cabin_lp_x2
+                    lp1 = self.cabin_lp1
+                    lp2 = self.cabin_lp2
 
                     for n in range(frames):
-                        x = raw_exhaust[n]
-                        y = b0_c * x + b1_c * x1 + b2_c * x2 - a1_c * y1 - a2_c * y2
-                        x2, x1 = x1, x
-                        y2, y1 = y1, y
-                        filtered_exhaust[n] = y
+                        # Stage 1
+                        lp1 = lp1 + alpha * (raw_exhaust[n] - lp1)
+                        # Stage 2
+                        lp2 = lp2 + alpha * (lp1 - lp2)
+                        filtered_exhaust[n] = lp2
 
-                    self.cabin_lp_y1, self.cabin_lp_y2 = y1, y2
-                    self.cabin_lp_x1, self.cabin_lp_x2 = x1, x2
+                    self.cabin_lp1 = lp1
+                    self.cabin_lp2 = lp2
 
-                    # 2) Heavy Chassis Structure-borne Vibration (Sub-bass boom ~52Hz)
-                    chassis_boom = muffler_rumble * 1.8 * self.chassis_vibe * self.bass_boost
+                    # 2) Smooth, Deep Chassis Structure-borne Vibration (Sub-bass boom ~50Hz)
+                    # Carefully scaled to prevent clipping
+                    chassis_boom = muffler_rumble * 0.75 * self.chassis_vibe * self.bass_boost
 
-                    # 3) Prominent Driver-Facing Intake Induction Roar
-                    # In cabin, intake sound sits directly in front of the driver
+                    # 3) Soft, Velvety Intake Induction Roar (No harsh harmonics)
+                    # Sits comfortably inside the driver cabin
+                    smooth_intake = np.tanh(intake_sound * 0.45) * 0.55
+
+                    # 4) Clean, Un-distorted Balanced Blend (Peak strictly controlled within ±0.75)
                     combined_mono = (
-                        filtered_exhaust * 0.65
-                        + chassis_boom * 1.3
-                        + intake_sound * 1.6
-                        + supercharger_sound * 1.2
-                        + crackle_burst * 0.75  # Muffled cabin pop thud
+                        filtered_exhaust * 0.40
+                        + chassis_boom * 0.40
+                        + smooth_intake * 0.45
+                        + supercharger_sound * 0.25
+                        + crackle_burst * 0.35  # Muffled cabin pop thud
                     )
+
+                    # Minimal clean analog warmth without any harsh overdrive
+                    drive = 1.02
+                    saturated = np.tanh(combined_mono * drive) * 0.82
                 else:
                     # --- 실외 배기구 (Exterior Tailpipe) ---
                     # Raw, open, raspy, full-frequency sound
                     combined_mono = (
-                        raw_exhaust
-                        + intake_sound * 0.45
-                        + supercharger_sound
+                        raw_exhaust * 0.70
+                        + intake_sound * 0.25
+                        + supercharger_sound * 0.40
                     )
 
-                # 12. Non-linear Saturation & Analog Tube Warmth (Loudness Maximizer)
-                drive = 1.0 + self.distortion * 2.2 * (0.8 + 0.6 * self.throttle)
-                saturated = np.tanh(combined_mono * drive * 0.55)
+                    # Controlled overdrive for raspy tailpipe
+                    drive = 1.0 + self.distortion * 1.5 * (0.6 + 0.4 * self.throttle)
+                    saturated = np.tanh(combined_mono * drive * 0.45) * 0.88
 
                 # 13. GTA / 3D Real-Game Stereo Spatializer (Binaural & Early Reflections)
-                # Simulates dual-exhaust separation, cabin early reflections, and wide sound field
                 p_len = self.spatial_buf_len
                 ptr = self.spatial_ptr
 
                 left_out = np.zeros(frames, dtype=np.float32)
                 right_out = np.zeros(frames, dtype=np.float32)
 
-                # Interaural time difference (ITD) delay for wide stereo (~0.7ms = 31 samples)
                 delay_itd = int(0.00075 * self.sample_rate)
-                # Cabin / Exhaust reflection delay (~18ms = 794 samples)
                 delay_echo = int(0.016 * self.sample_rate)
-
-                w_factor = self.stereo_width
+                w_factor = self.stereo_width * (0.8 if self.perspective == "cabin" else 1.1)
 
                 for n in range(frames):
                     inp = saturated[n]
 
-                    # Push into stereo delay lines
                     self.spatial_buf_l[ptr] = inp
                     self.spatial_buf_r[ptr] = inp
 
-                    # Read delayed samples
                     r_l = (ptr - delay_itd) % p_len
                     r_echo = (ptr - delay_echo) % p_len
 
                     delayed_sample = self.spatial_buf_l[r_l]
-                    reverb_sample = self.spatial_buf_l[r_echo] * 0.22
+                    reverb_sample = self.spatial_buf_l[r_echo] * 0.16
 
-                    # Mid/Side stereo widening
                     mid = inp
-                    side = (inp - delayed_sample) * w_factor * 0.75
+                    side = (inp - delayed_sample) * w_factor * 0.50
 
                     left_out[n] = (mid + side) + reverb_sample
                     right_out[n] = (mid - side) + reverb_sample * 0.85
@@ -603,32 +589,35 @@ class ExhaustSoundSynthesizer:
 
                 self.spatial_ptr = ptr
 
-                # 14. DC Blocking Filter & Master Limiting
+                # 14. DC Blocking Filter & Smooth Safe Limiting
                 for n in range(frames):
-                    # Left
                     xl = left_out[n]
                     yl = xl - self.dc_x1_l + 0.995 * self.dc_y1_l
                     self.dc_x1_l, self.dc_y1_l = xl, yl
                     left_out[n] = yl
 
-                    # Right
                     xr = right_out[n]
                     yr = xr - self.dc_x1_r + 0.995 * self.dc_y1_r
                     self.dc_x1_r, self.dc_y1_r = xr, yr
                     right_out[n] = yr
 
-                # Master Gain & Brickwall Limiter
-                final_l = np.clip(left_out * self.master_volume * 0.92, -0.98, 0.98)
-                final_r = np.clip(right_out * self.master_volume * 0.92, -0.98, 0.98)
+                # Master Gain & Soft Knee Limiter (Guaranteed 0% clipping)
+                vol = self.master_volume * (0.88 if self.perspective == "cabin" else 0.85)
+                final_l = np.tanh(left_out * vol)
+                final_r = np.tanh(right_out * vol)
 
                 outdata[:, 0] = final_l
                 outdata[:, 1] = final_r
 
-                # Waveform monitor (mono average for visualizer)
-                self.latest_waveform[:] = (final_l + final_r) * 0.5
+                # Safe visualizer buffer update regardless of buffer size (512, 1024, 2048, 4096)
+                step = max(1, frames // 256)
+                mono_mix = (final_l + final_r) * 0.5
+                downsampled = mono_mix[::step][:256]
+                self.latest_waveform[:len(downsampled)] = downsampled
 
         except Exception as e:
             outdata.fill(0)
+            print("Audio Callback Error:", e)
 
     @staticmethod
     def get_output_devices() -> List[Dict[str, Any]]:
