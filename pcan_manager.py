@@ -129,7 +129,8 @@ class PcanManager:
 
         # Telemetry Cache
         self.current_rpm = 0.0
-        self.current_throttle = 0.0
+        self.current_load = 0.0      # Calculated Engine Load (0.0 ~ 1.0)
+        self.current_throttle = 0.0  # Throttle Position (0.0 ~ 1.0)
         self.current_speed = 0.0
         self.messages_count = 0
         self.last_msg_timestamp = 0.0
@@ -258,10 +259,15 @@ class PcanManager:
             self.on_status_change("PCAN-USB Pro 연결 해제됨", False)
 
     def _obd_poll_worker(self):
-        """Active OBD-II PID polling with crash-proof exception handling and backoff."""
+        """Active OBD-II PID polling: Engine RPM (0x0C), Calculated Engine Load (0x04), Throttle (0x11)."""
         rpm_query = can.Message(
             arbitration_id=0x7DF,
             data=[0x02, 0x01, 0x0C, 0x55, 0x55, 0x55, 0x55, 0x55],
+            is_extended_id=False
+        )
+        load_query = can.Message(
+            arbitration_id=0x7DF,
+            data=[0x02, 0x01, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55],
             is_extended_id=False
         )
         throttle_query = can.Message(
@@ -281,7 +287,11 @@ class PcanManager:
                 consecutive_errors = 0
                 poll_counter += 1
 
-                if poll_counter % 3 == 0:
+                # Poll Calculated Load (PID 0x04) every 2nd cycle (~16Hz)
+                if poll_counter % 2 == 0:
+                    self.bus.send(load_query, timeout=0.05)
+                # Poll Throttle (PID 0x11) every 4th cycle (~8Hz)
+                elif poll_counter % 4 == 0:
                     self.bus.send(throttle_query, timeout=0.05)
 
                 time.sleep(0.030)  # ~33Hz query
@@ -337,8 +347,10 @@ class PcanManager:
                         tb = self.throttle_start_byte
                         if len(data) > tb:
                             th_val = (data[tb] * self.throttle_scale) / 100.0
-                            throttle = max(0.0, min(1.0, th_val))
-                            self.current_throttle = throttle
+                            val_norm = max(0.0, min(1.0, th_val))
+                            self.current_load = val_norm
+                            self.current_throttle = val_norm
+                            throttle = val_norm
 
                 # 2. Auto-Discovery Mode (Scans all incoming IDs for RPM patterns)
                 elif self.mode == "READ_ONLY_AUTO":
@@ -367,9 +379,17 @@ class PcanManager:
                                 raw_val = (data[3] << 8) | data[4]
                                 rpm = raw_val / 4.0
                                 self.current_rpm = rpm
-                            elif pid == 0x11 and len(data) >= 4:  # Throttle
-                                throttle = data[3] / 255.0
-                                self.current_throttle = throttle
+                            elif pid == 0x04 and len(data) >= 4:  # Calculated Engine Load (0~100%)
+                                load_val = data[3] / 255.0
+                                self.current_load = load_val
+                                self.current_throttle = load_val
+                                throttle = load_val
+                            elif pid == 0x11 and len(data) >= 4:  # Throttle Position (0~100%)
+                                th_val = data[3] / 255.0
+                                if self.current_load == 0.0:
+                                    self.current_load = th_val
+                                self.current_throttle = th_val
+                                throttle = th_val
                             elif pid == 0x0D and len(data) >= 4:  # Speed
                                 speed = float(data[3])
                                 self.current_speed = speed

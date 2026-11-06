@@ -650,7 +650,7 @@ class ExhaustAppWindow(QMainWindow):
         veh_layout = QVBoxLayout(self.panel_veh_status)
         self.lbl_veh_info = QLabel("연결 상태: 대기 중 ('PCAN-USB Pro 연동' 탭에서 연결을 시작하세요)")
         self.lbl_veh_info.setStyleSheet("color: #38bdf8; font-size: 13px; font-weight: bold;")
-        self.lbl_veh_telemetry = QLabel("수신 프레임: 0 msgs | RPM: 0 | 스로틀: 0% | 차속: 0 km/h")
+        self.lbl_veh_telemetry = QLabel("수신 프레임: 0 msgs | RPM: 0 | 엔진 부하(Load): 0% | 차속: 0 km/h")
         self.lbl_veh_telemetry.setFont(QFont("Consolas", 12))
         veh_layout.addWidget(self.lbl_veh_info)
         veh_layout.addWidget(self.lbl_veh_telemetry)
@@ -1204,7 +1204,7 @@ class ExhaustAppWindow(QMainWindow):
             self.lbl_veh_telemetry.setText(
                 f"수신 프레임: {self.pcan_mgr.messages_count} msgs | "
                 f"현재 RPM: {int(self.pcan_mgr.current_rpm)} | "
-                f"현재 스로틀: {int(self.pcan_mgr.current_throttle * 100)}% | "
+                f"엔진 부하(Load): {int(self.pcan_mgr.current_load * 100)}% | "
                 f"차속: {self.pcan_mgr.current_speed:.1f} km/h"
             )
 
