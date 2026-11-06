@@ -18,3 +18,16 @@
    - `python -c "from pcan_manager import PcanManager; ..."` → PCAN_USBBUS1 비활성 버스에서 READ_ONLY_PRESET 연결/해제 정상 확인
 3. 미해결 / 제안:
    - 실제 차량의 OBD-II 포트 혹은 C-CAN 배선(차종별 핀아웃)에 직결하여 실차 주행 배기음 실시간 동기화 테스트 권장
+
+
+## 2026-11-06 20:50 — FMOD DLL 감지 실패 원인 진단 및 64비트 로딩 지원
+
+[DONE]
+1. 수정 파일:
+   - fmod_engine.py : `check_dll_arch`, `_load_fmod_dll`, `get_status_message`, `reload` : 32비트/64비트 PE 아키텍처 자동 판별 및 상세 진단 메시지, ctypes 핸들 정상화
+   - app_gui.py : `_build_engine_choice_tab`, `_on_audio_backend_changed`, `_refresh_fmod_status` : FMOD DLL 32비트 불일치 안내문 표시 및 실시간 새로고침 버튼 추가
+2. 검증:
+   - `python -c "from fmod_engine import FmodEngineManager; f = FmodEngineManager(); print(f.get_status_message())"` → 현재 배치된 fmod.dll이 32비트(x86)임을 감지하고 64비트 경로 안내 원문 정상 출력
+   - `python -c "from app_gui import ExhaustAppWindow; ..."` → 오프스크린 GUI에서 FMOD 진단 라벨 및 새로고침 버튼 정상 연동 확인
+3. 미해결 / 제안:
+   - FMOD 다운로드 폴더의 `api/core/lib/x64/fmod.dll` 파일을 복사하여 프로젝트 폴더에 덮어쓴 뒤 GUI의 새로고침 버튼 클릭 권장
