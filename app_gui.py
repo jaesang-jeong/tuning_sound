@@ -807,13 +807,19 @@ class ExhaustAppWindow(QMainWindow):
         layout.addWidget(self.box_pd_ctrl)
 
         # FMOD Core status box
-        self.box_fmod_ctrl = QGroupBox("FMOD Core API 상태")
+        self.box_fmod_ctrl = QGroupBox("FMOD Core API 상태 및 라이브러리 연동")
         fmod_l = QVBoxLayout(self.box_fmod_ctrl)
-        fmod_avail = self.fmod_mgr.is_available()
-        fmod_text = "✅ FMOD Core 라이브러리가 감지되었습니다." if fmod_avail else "ℹ️ fmod.dll이 감지되지 않았습니다. (FMOD 공식 사이트에서 fmod.dll 다운로드 시 활성화)"
-        lbl_fmod = QLabel(fmod_text)
-        lbl_fmod.setStyleSheet("color: #38bdf8; font-weight: bold;")
-        fmod_l.addWidget(lbl_fmod)
+        fmod_l.setSpacing(8)
+
+        self.lbl_fmod = QLabel(self.fmod_mgr.get_status_message())
+        self.lbl_fmod.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 12px; line-height: 1.4;")
+        fmod_l.addWidget(self.lbl_fmod)
+
+        btn_rescan_fmod = QPushButton("🔄 FMOD DLL 다시 확인 (새로고침)")
+        btn_rescan_fmod.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold; padding: 6px 14px; border-radius: 4px;")
+        btn_rescan_fmod.clicked.connect(self._refresh_fmod_status)
+        fmod_l.addWidget(btn_rescan_fmod)
+
         layout.addWidget(self.box_fmod_ctrl)
 
         layout.addStretch()
@@ -894,6 +900,18 @@ class ExhaustAppWindow(QMainWindow):
         sz = sizes[idx] if idx < len(sizes) else 1024
         self.synth.set_buffer_size(sz)
 
+    def _refresh_fmod_status(self):
+        """Re-scans FMOD DLL and updates GUI status display."""
+        loaded = self.fmod_mgr.reload()
+        msg = self.fmod_mgr.get_status_message()
+        self.lbl_fmod.setText(msg)
+        color = "#34d399" if loaded else "#f87171"
+        self.lbl_fmod.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 12px; line-height: 1.4;")
+        if loaded:
+            QMessageBox.information(self, "FMOD 연동 성공", "64비트 FMOD Core 라이브러리가 성공적으로 감지되었습니다!")
+        else:
+            QMessageBox.warning(self, "FMOD 연동 안내", msg)
+
     def _on_audio_backend_changed(self, idx: int):
         backends = ["NATIVE_DSP", "FMOD", "PURE_DATA"]
         self.active_audio_engine = backends[idx]
@@ -903,7 +921,8 @@ class ExhaustAppWindow(QMainWindow):
         elif self.active_audio_engine == "FMOD":
             self.lbl_backend_status.setText("현재 엔진: FMOD Core API")
             if not self.fmod_mgr.is_available():
-                QMessageBox.information(self, "안내", "fmod.dll을 프로젝트 폴더에 넣어주시면 FMOD Core API가 활성화됩니다.")
+                msg = self.fmod_mgr.get_status_message()
+                QMessageBox.information(self, "FMOD Core API 안내", msg)
         elif self.active_audio_engine == "PURE_DATA":
             self.lbl_backend_status.setText("현재 엔진: Pure Data (Pd-vanilla FUDI 소켓)")
 
