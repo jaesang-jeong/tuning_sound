@@ -198,12 +198,23 @@ class PcanManager:
             is_read_only = (mode != "OBD2_POLL")
             bus_state = BusState.PASSIVE if is_read_only else BusState.ACTIVE
 
-            self.bus = can.Bus(
-                interface="pcan",
-                channel=channel,
-                bitrate=bitrate,
-                state=bus_state
-            )
+            # Cross-platform interface selection:
+            # On Linux (Raspberry Pi), default to SocketCAN ('can0')
+            # On Windows, default to PEAK PCAN ('pcan')
+            if sys.platform.startswith("linux") or str(channel).lower().startswith("can"):
+                target_interface = "socketcan"
+                target_channel = channel if str(channel).lower().startswith("can") else "can0"
+                self.bus = can.Bus(
+                    interface=target_interface,
+                    channel=target_channel
+                )
+            else:
+                self.bus = can.Bus(
+                    interface="pcan",
+                    channel=channel,
+                    bitrate=bitrate,
+                    state=bus_state
+                )
             self.is_connected = True
             self.running = True
             self.messages_count = 0

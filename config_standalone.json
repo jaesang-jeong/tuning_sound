@@ -1,0 +1,12 @@
+{
+  "engine_model": "muscle_v8",
+  "preset_name": "아메리칸 머슬카 V8 (6.2L Supercharged)",
+  "perspective": "cabin",
+  "master_volume": 0.90,
+  "can_channel": "can0",
+  "can_bitrate": 500000,
+  "can_mode": "READ_ONLY_PRESET",
+  "car_preset": "현대 / 기아 / 제네시스 (0x316)",
+  "buffer_size": 1024,
+  "sample_rate": 44100
+}
