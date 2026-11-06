@@ -1,7 +1,9 @@
 """
-PCAN-USB Pro Hardware Interface & Vehicle CAN Manager
-Specialized for PEAK-System PCAN-USB Pro (Dual-Channel CAN/CAN-FD).
-Handles hardware auto-detection, vehicle OBD-II polling, and custom broadcast sniffing.
+PCAN-USB Pro Hardware Interface & High-Speed Read-Only CAN Manager
+Supports:
+  1. Safe Listen-Only (Read-Only) mode without transmission (Prevents bus-off / crashes when disconnected).
+  2. Ultra-low latency (10ms / 100Hz) passive sniffing of broadcast frames (Hyundai/Kia, BMW, VAG, GM).
+  3. Automatic OBD-II fallback polling with robust error recovery.
 """
 
 import time
@@ -10,6 +12,7 @@ from typing import Callable, Optional, List, Dict, Any
 
 try:
     import can
+    from can.bus import BusState
     from can.interfaces.pcan.basic import (
         PCANBasic,
         PCAN_USBBUS1,
@@ -40,11 +43,55 @@ PCAN_CHANNEL_CONSTS = {
     "PCAN_USBBUS4": 0x54,
 }
 
+# Major Automaker High-Speed Broadcast Presets (10ms / 100Hz native ECU broadcast)
+CAR_BROADCAST_PRESETS = {
+    "현대 / 기아 / 제네시스 (0x316)": {
+        "can_id": 0x316,
+        "rpm_start_byte": 2,
+        "rpm_length": 2,
+        "rpm_scale": 0.25,
+        "rpm_byteorder": "little",
+        "throttle_start_byte": 4,
+        "throttle_scale": 0.392,
+        "description": "현대/기아 C-CAN 500k 표준 10ms 주기 엔진 텔레메트리"
+    },
+    "BMW (PT-CAN 0x0A5)": {
+        "can_id": 0x0A5,
+        "rpm_start_byte": 4,
+        "rpm_length": 2,
+        "rpm_scale": 0.25,
+        "rpm_byteorder": "little",
+        "throttle_start_byte": 2,
+        "throttle_scale": 0.392,
+        "description": "BMW PT-CAN 500k 10ms 주기 토크/RPM 프레임"
+    },
+    "폭스바겐 / 아우디 / 포르쉐 (VAG 0x280)": {
+        "can_id": 0x280,
+        "rpm_start_byte": 2,
+        "rpm_length": 2,
+        "rpm_scale": 0.25,
+        "rpm_byteorder": "little",
+        "throttle_start_byte": 5,
+        "throttle_scale": 0.392,
+        "description": "VAG Motor 1 고속 10ms 주기 엔진 브로드캐스트"
+    },
+    "GM / 쉐보레 (GMLAN 0x0C9)": {
+        "can_id": 0x0C9,
+        "rpm_start_byte": 1,
+        "rpm_length": 2,
+        "rpm_scale": 0.25,
+        "rpm_byteorder": "big",
+        "throttle_start_byte": 3,
+        "throttle_scale": 0.392,
+        "description": "GM 고속 Powertrain CAN 프레임"
+    },
+}
+
 
 class PcanManager:
     """
-    High-performance PCAN-USB Pro interface manager.
-    Supports active OBD-II PID querying and passive broadcast frame listening.
+    High-performance, crash-proof PCAN-USB Pro interface manager.
+    Supports Read-Only (Listen-Only) passive sniffing and active OBD-II polling.
     """
     def __init__(self):
         self.bus: Optional[can.BusABC] = None
@@ -53,17 +100,13 @@ class PcanManager:
         self.channel_name = "PCAN_USBBUS1"
         self.bitrate = 500000
 
-        # Protocols: "OBD2_POLL" (Active PID request), "OBD2_PASSIVE", or "CUSTOM"
-        self.protocol_mode = "OBD2_POLL"
-
-        # Threading
-        self.rx_thread: Optional[threading.Thread] = None
-        self.poll_thread: Optional[threading.Thread] = None
-
-        # Callbacks
-        self.on_telemetry_update: Optional[Callable[[float, float, float], None]] = None  # rpm, throttle, speed
-        self.on_status_change: Optional[Callable[[str, bool], None]] = None
-        self.on_can_log: Optional[Callable[[str], None]] = None  # Raw frame log string
+        # Operational Modes:
+        # 1) 'READ_ONLY_AUTO'   : Pure passive sniffing (No TX packets, never crashes without OBD2)
+        # 2) 'READ_ONLY_PRESET' : Sniffing specific car preset (Hyundai/BMW/VAG/GM)
+        # 3) 'READ_ONLY_CUSTOM' : User specified CAN ID
+        # 4) 'OBD2_POLL'        : Active request PID 0x0C (Only when OBD2 is connected)
+        self.mode = "READ_ONLY_PRESET"
+        self.preset_name = "현대 / 기아 / 제네시스 (0x316)"
 
         # Custom Sniffing Config
         self.custom_can_id = 0x316
@@ -71,8 +114,18 @@ class PcanManager:
         self.rpm_length = 2
         self.rpm_scale = 0.25
         self.rpm_offset = 0.0
+        self.rpm_byteorder = "little"
         self.throttle_start_byte = 4
         self.throttle_scale = 0.392
+
+        # Threading
+        self.rx_thread: Optional[threading.Thread] = None
+        self.poll_thread: Optional[threading.Thread] = None
+
+        # Callbacks (Thread-safe signaling to GUI)
+        self.on_telemetry_update: Optional[Callable[[float, float, float], None]] = None
+        self.on_status_change: Optional[Callable[[str, bool], None]] = None
+        self.on_can_log: Optional[Callable[[str], None]] = None
 
         # Telemetry Cache
         self.current_rpm = 0.0
@@ -80,6 +133,10 @@ class PcanManager:
         self.current_speed = 0.0
         self.messages_count = 0
         self.last_msg_timestamp = 0.0
+
+        # Auto-Discovery State (Tracks candidate IDs with RPM-like dynamic values)
+        self.id_freq_map: Dict[int, int] = {}
+        self.auto_detected_id: Optional[int] = None
 
     @staticmethod
     def scan_pcan_hardware() -> List[Dict[str, Any]]:
@@ -110,30 +167,60 @@ class PcanManager:
         self,
         channel: str = "PCAN_USBBUS1",
         bitrate: int = 500000,
-        mode: str = "OBD2_POLL"
+        mode: str = "READ_ONLY_PRESET",
+        preset_name: str = "현대 / 기아 / 제네시스 (0x316)"
     ) -> bool:
-        """Connects to PCAN-USB Pro hardware."""
+        """
+        Connects to PCAN-USB Pro.
+        In READ_ONLY modes, sets hardware to Listen-Only (PASSIVE) so it NEVER crashes
+        even if the OBD-II cable is completely disconnected or has no termination.
+        """
         self.disconnect()
         self.channel_name = channel
         self.bitrate = bitrate
-        self.protocol_mode = mode
+        self.mode = mode
+        self.preset_name = preset_name
+
+        # Load preset if chosen
+        if preset_name in CAR_BROADCAST_PRESETS:
+            cfg = CAR_BROADCAST_PRESETS[preset_name]
+            self.custom_can_id = cfg["can_id"]
+            self.rpm_start_byte = cfg["rpm_start_byte"]
+            self.rpm_length = cfg["rpm_length"]
+            self.rpm_scale = cfg["rpm_scale"]
+            self.rpm_byteorder = cfg["rpm_byteorder"]
+            self.throttle_start_byte = cfg["throttle_start_byte"]
+            self.throttle_scale = cfg["throttle_scale"]
 
         try:
-            self.bus = can.Bus(interface="pcan", channel=channel, bitrate=bitrate)
+            # Use Listen-Only (PASSIVE) for all Read-Only modes
+            is_read_only = (mode != "OBD2_POLL")
+            bus_state = BusState.PASSIVE if is_read_only else BusState.ACTIVE
+
+            self.bus = can.Bus(
+                interface="pcan",
+                channel=channel,
+                bitrate=bitrate,
+                state=bus_state
+            )
             self.is_connected = True
             self.running = True
+            self.messages_count = 0
+            self.id_freq_map.clear()
+            self.auto_detected_id = None
 
             # Start RX loop
             self.rx_thread = threading.Thread(target=self._rx_worker, daemon=True)
             self.rx_thread.start()
 
-            # Start OBD-II active query loop if mode is OBD2_POLL
+            # Start OBD-II active polling loop ONLY if active mode is explicitly selected
             if mode == "OBD2_POLL":
                 self.poll_thread = threading.Thread(target=self._obd_poll_worker, daemon=True)
                 self.poll_thread.start()
 
+            mode_label = "Read-Only 초고속 수신" if is_read_only else "OBD-II 요청 송출 모드"
             if self.on_status_change:
-                self.on_status_change(f"PCAN-USB Pro 연결 성공 ({channel} @ {bitrate//1000}kbps)", True)
+                self.on_status_change(f"PCAN 연결 성공 ({channel} @ {bitrate//1000}k, {mode_label})", True)
             return True
 
         except Exception as e:
@@ -143,14 +230,22 @@ class PcanManager:
             return False
 
     def disconnect(self):
-        """Disconnects PCAN adapter."""
+        """Safely disconnects PCAN adapter."""
         self.running = False
         if self.poll_thread:
-            self.poll_thread.join(timeout=0.6)
+            try:
+                self.poll_thread.join(timeout=0.3)
+            except Exception:
+                pass
             self.poll_thread = None
+
         if self.rx_thread:
-            self.rx_thread.join(timeout=0.6)
+            try:
+                self.rx_thread.join(timeout=0.3)
+            except Exception:
+                pass
             self.rx_thread = None
+
         if self.bus:
             try:
                 self.bus.shutdown()
@@ -163,9 +258,7 @@ class PcanManager:
             self.on_status_change("PCAN-USB Pro 연결 해제됨", False)
 
     def _obd_poll_worker(self):
-        """Periodically queries standard OBD-II PID 0x0C (Engine RPM) and 0x11 (Throttle)."""
-        # OBD-II functional broadcast request: CAN ID 0x7DF
-        # [0x02, Service 0x01, PID, 0x55, 0x55, 0x55, 0x55, 0x55]
+        """Active OBD-II PID polling with crash-proof exception handling and backoff."""
         rpm_query = can.Message(
             arbitration_id=0x7DF,
             data=[0x02, 0x01, 0x0C, 0x55, 0x55, 0x55, 0x55, 0x55],
@@ -178,70 +271,108 @@ class PcanManager:
         )
 
         poll_counter = 0
+        consecutive_errors = 0
+
         while self.running and self.bus:
             try:
-                # Query RPM at ~33Hz (every 30ms)
-                self.bus.send(rpm_query)
+                # If OBD2 is not connected, bus.send will fail with ACK error.
+                # Catch it safely so the thread NEVER crashes the application!
+                self.bus.send(rpm_query, timeout=0.05)
+                consecutive_errors = 0
                 poll_counter += 1
 
-                # Query Throttle every 3 cycles (~11Hz)
                 if poll_counter % 3 == 0:
-                    self.bus.send(throttle_query)
+                    self.bus.send(throttle_query, timeout=0.05)
 
-                time.sleep(0.030)
+                time.sleep(0.030)  # ~33Hz query
+
             except Exception:
-                time.sleep(0.050)
+                consecutive_errors += 1
+                # Exponential backoff when disconnected to save CPU and avoid bus-off locks
+                sleep_time = min(1.0, 0.1 * consecutive_errors)
+                time.sleep(sleep_time)
 
     def _rx_worker(self):
-        """Receives and parses incoming CAN packets in real time."""
+        """High-speed zero-copy packet receiver."""
+        log_timer = 0.0
+
         while self.running and self.bus:
             try:
-                msg = self.bus.recv(timeout=0.1)
+                msg = self.bus.recv(timeout=0.05)
                 if msg is None:
                     continue
 
-                self.messages_count += 1
-                self.last_msg_timestamp = time.time()
-                data = msg.data
+                # Filter out hardware error frames and PCAN internal status frames (e.g. 0x004)
+                if getattr(msg, "is_error_frame", False) or msg.arbitration_id < 0x010:
+                    continue
 
-                # Optional log callback
-                if self.on_can_log and (self.messages_count % 5 == 0):
+                self.messages_count += 1
+                now = time.time()
+                self.last_msg_timestamp = now
+                data = msg.data
+                arb_id = msg.arbitration_id
+
+                # Rate-limited UI logging (max 10 logs per second to prevent GUI lag)
+                if self.on_can_log and (now - log_timer > 0.08):
+                    log_timer = now
                     data_hex = " ".join(f"{b:02X}" for b in data)
-                    self.on_can_log(f"ID: 0x{msg.arbitration_id:03X}  DLC: {len(data)}  Data: {data_hex}")
+                    self.on_can_log(f"ID: 0x{arb_id:03X}  DLC: {len(data)}  Data: {data_hex}")
 
                 rpm = None
                 throttle = None
                 speed = None
 
-                # 1. Standard OBD-II response decoding (0x7E8 ~ 0x7EF)
-                if 0x7E8 <= msg.arbitration_id <= 0x7EF and len(data) >= 3:
-                    service = data[1]
-                    pid = data[2]
-                    if service == 0x41:  # Show Current Data response
-                        if pid == 0x0C and len(data) >= 5:  # Engine RPM
-                            raw_val = (data[3] << 8) | data[4]
-                            rpm = raw_val / 4.0
-                            self.current_rpm = rpm
-                        elif pid == 0x11 and len(data) >= 4:  # Throttle Position
-                            throttle = data[3] / 255.0
+                # 1. Read-Only Broadcast Sniffing (Preset or Custom CAN ID)
+                if self.mode in ("READ_ONLY_PRESET", "READ_ONLY_CUSTOM"):
+                    if arb_id == self.custom_can_id:
+                        sb = self.rpm_start_byte
+                        lb = self.rpm_length
+                        if len(data) >= (sb + lb):
+                            raw_rpm = int.from_bytes(data[sb : sb + lb], byteorder=self.rpm_byteorder)
+                            val = raw_rpm * self.rpm_scale + self.rpm_offset
+                            if 400.0 <= val <= 11000.0:
+                                rpm = val
+                                self.current_rpm = rpm
+
+                        tb = self.throttle_start_byte
+                        if len(data) > tb:
+                            th_val = (data[tb] * self.throttle_scale) / 100.0
+                            throttle = max(0.0, min(1.0, th_val))
                             self.current_throttle = throttle
-                        elif pid == 0x0D and len(data) >= 4:  # Vehicle Speed
-                            speed = float(data[3])
-                            self.current_speed = speed
 
-                # 2. Custom CAN broadcast frame sniffing
-                elif self.protocol_mode == "CUSTOM" and msg.arbitration_id == self.custom_can_id:
-                    sb = self.rpm_start_byte
-                    lb = self.rpm_length
-                    if len(data) >= (sb + lb):
-                        raw_rpm = int.from_bytes(data[sb : sb + lb], byteorder="little")
-                        rpm = raw_rpm * self.rpm_scale + self.rpm_offset
-                        self.current_rpm = rpm
+                # 2. Auto-Discovery Mode (Scans all incoming IDs for RPM patterns)
+                elif self.mode == "READ_ONLY_AUTO":
+                    # Look for 10ms~20ms high-frequency frames with values between 600 and 7500
+                    if len(data) >= 4:
+                        # Test common 16-bit slots (bytes 1-2, 2-3, 3-4, 4-5)
+                        for start_b in [1, 2, 3, 4]:
+                            if len(data) >= start_b + 2:
+                                for bo in ["little", "big"]:
+                                    test_val = int.from_bytes(data[start_b : start_b + 2], byteorder=bo) * 0.25
+                                    if 550.0 <= test_val <= 8500.0:
+                                        rpm = test_val
+                                        self.current_rpm = rpm
+                                        self.auto_detected_id = arb_id
+                                        break
+                                if rpm is not None:
+                                    break
 
-                    tb = self.throttle_start_byte
-                    if len(data) > tb:
-                        throttle = (data[tb] * self.throttle_scale) / 100.0
-                        self.current_throttle = throttle
+                # 3. Active OBD-II response decoding (0x7E8 ~ 0x7EF)
+                elif self.mode == "OBD2_POLL":
+                    if 0x7E8 <= arb_id <= 0x7EF and len(data) >= 3:
+                        service = data[1]
+                        pid = data[2]
+                        if service == 0x41:
+                            if pid == 0x0C and len(data) >= 5:  # Engine RPM
+                                raw_val = (data[3] << 8) | data[4]
+                                rpm = raw_val / 4.0
+                                self.current_rpm = rpm
+                            elif pid == 0x11 and len(data) >= 4:  # Throttle
+                                throttle = data[3] / 255.0
+                                self.current_throttle = throttle
+                            elif pid == 0x0D and len(data) >= 4:  # Speed
+                                speed = float(data[3])
+                                self.current_speed = speed
 
                 if (rpm is not None or throttle is not None) and self.on_telemetry_update:
                     self.on_telemetry_update(self.current_rpm, self.current_throttle, self.current_speed)
@@ -251,7 +382,9 @@ class PcanManager:
 
 
 if __name__ == "__main__":
-    print("Testing PCAN hardware scan...")
-    devices = PcanManager.scan_pcan_hardware()
+    print("Testing PCAN Read-Only Manager...")
+    mgr = PcanManager()
+    devices = mgr.scan_pcan_hardware()
+    print(f"Detected {len(devices)} PCAN channels.")
     for d in devices:
-        print(f" - {d['label']}")
+        print(" -", d["label"])

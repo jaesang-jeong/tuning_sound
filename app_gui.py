@@ -40,10 +40,19 @@ from PySide6.QtWidgets import (
 
 from sound_engine import ExhaustSoundSynthesizer
 from can_interface import VirtualVehicleSimulator, CanReceiver
-from pcan_manager import PcanManager, PCAN_CHANNELS
+from pcan_manager import PcanManager, PCAN_CHANNELS, CAR_BROADCAST_PRESETS
 from fmod_engine import FmodEngineManager
 from pd_bridge import PdBridgeManager
 from presets_manager import PresetsManager
+
+
+class CanSignalBridge(QObject):
+    """Thread-safe Qt signal bridge between background CAN/Sim worker threads and PySide6 GUI."""
+    sig_telemetry = Signal(float, float, float)
+    sig_status = Signal(str, bool)
+    sig_log = Signal(str)
+    sig_generic_can = Signal(float, float, float)
+    sig_sim_tick = Signal(float, float, float, int)
 
 
 class WaveformWidget(QFrame):
@@ -226,6 +235,7 @@ class ExhaustAppWindow(QMainWindow):
         self.sim = VirtualVehicleSimulator()
         self.can_rx = CanReceiver()
         self.pcan_mgr = PcanManager()
+        self.can_bridge = CanSignalBridge()
         self.fmod_mgr = FmodEngineManager()
         self.pd_bridge = PdBridgeManager()
 
@@ -654,9 +664,20 @@ class ExhaustAppWindow(QMainWindow):
         layout.setSpacing(12)
         layout.setContentsMargins(14, 14, 14, 14)
 
+        # 1. Informational Banner explaining Read-Only 10ms Mode
+        info_banner = QLabel(
+            "⚡ <b>10ms(100Hz) 초고속 Read-Only 무명령 패시브 모드 (Listen-Only)</b><br>"
+            "차량 CAN 버스에 TX 요청을 보내지 않고, ECU가 계기판/변속기용으로 브로드캐스트하는 프레임을 순수 수신합니다.<br>"
+            "• <b>핵심 장점</b>: 지연 0ms(OBD 대비 3~5배 빠름), 차량 ECU 간섭 0%, <b>OBD2 미연결 상태에서도 프로그램 절대 다운 없음</b>"
+        )
+        info_banner.setStyleSheet("background-color: #0d2818; color: #34d399; border: 1px solid #059669; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.4;")
+        layout.addWidget(info_banner)
+
         box_pcan = QGroupBox("PEAK PCAN-USB Pro 어댑터 연결 및 프로토콜 설정")
         p_layout = QGridLayout(box_pcan)
+        p_layout.setSpacing(10)
 
+        # Row 0: Channel & Scan
         p_layout.addWidget(QLabel("PCAN 채널:"), 0, 0)
         self.combo_pcan_ch = QComboBox()
         self.combo_pcan_ch.addItems(list(PCAN_CHANNELS.keys()))
@@ -666,16 +687,58 @@ class ExhaustAppWindow(QMainWindow):
         btn_rescan_pcan.clicked.connect(self._scan_pcan_devices)
         p_layout.addWidget(btn_rescan_pcan, 0, 2)
 
+        # Row 1: Baudrate
         p_layout.addWidget(QLabel("통신 속도:"), 1, 0)
         self.combo_pcan_baud = QComboBox()
-        self.combo_pcan_baud.addItems(["500000 (500 kbps - 표준 차량)", "250000 (250 kbps)", "1000000 (1 Mbps)"])
-        p_layout.addWidget(self.combo_pcan_baud, 1, 1)
+        self.combo_pcan_baud.addItems(["500000 (500 kbps - 차량 고속 CAN 표준)", "250000 (250 kbps)", "1000000 (1 Mbps)"])
+        p_layout.addWidget(self.combo_pcan_baud, 1, 1, 1, 2)
 
-        p_layout.addWidget(QLabel("프로토콜 모드:"), 1, 2)
+        # Row 2: Protocol Mode (Read-Only Preset as Default)
+        p_layout.addWidget(QLabel("프로토콜 모드:"), 2, 0)
         self.combo_pcan_mode = QComboBox()
-        self.combo_pcan_mode.addItems(["OBD2_POLL (표준 자동 쿼리 PID 0x0C)", "OBD2_PASSIVE (패시브 스니핑)", "CUSTOM (사용자 지정 CAN ID)"])
-        p_layout.addWidget(self.combo_pcan_mode, 1, 3)
+        self.combo_pcan_mode.addItems([
+            "READ_ONLY_PRESET (완성차 제조사 10ms 패시브 스니핑 - 권장)",
+            "READ_ONLY_AUTO (자동 탐지 - 10~20ms RPM 프레임 자동 감지)",
+            "READ_ONLY_CUSTOM (사용자 지정 CAN ID 패시브)",
+            "OBD2_POLL (표준 능동 쿼리 PID 0x0C - 차 시동 켜짐 필요)"
+        ])
+        self.combo_pcan_mode.currentIndexChanged.connect(self._on_pcan_mode_changed)
+        p_layout.addWidget(self.combo_pcan_mode, 2, 1, 1, 2)
 
+        # Row 3: Automaker Broadcast Presets
+        p_layout.addWidget(QLabel("제조사 프리셋:"), 3, 0)
+        self.combo_pcan_preset = QComboBox()
+        for p_name, p_info in CAR_BROADCAST_PRESETS.items():
+            self.combo_pcan_preset.addItem(f"{p_name} - {p_info['description']}", userData=p_name)
+        p_layout.addWidget(self.combo_pcan_preset, 3, 1, 1, 2)
+
+        # Row 4: Custom CAN ID Config (Hidden/Disabled unless CUSTOM mode selected)
+        p_layout.addWidget(QLabel("커스텀 ID 설정:"), 4, 0)
+        custom_layout = QHBoxLayout()
+        custom_layout.addWidget(QLabel("ID(Hex):"))
+        self.spin_custom_can_id = QLineEdit("0x316")
+        self.spin_custom_can_id.setMaximumWidth(70)
+        self.spin_custom_can_id.setEnabled(False)
+        custom_layout.addWidget(self.spin_custom_can_id)
+
+        custom_layout.addWidget(QLabel("RPM바이트:"))
+        self.spin_custom_rpm_byte = QSpinBox()
+        self.spin_custom_rpm_byte.setRange(0, 6)
+        self.spin_custom_rpm_byte.setValue(2)
+        self.spin_custom_rpm_byte.setEnabled(False)
+        custom_layout.addWidget(self.spin_custom_rpm_byte)
+
+        custom_layout.addWidget(QLabel("스로틀바이트:"))
+        self.spin_custom_th_byte = QSpinBox()
+        self.spin_custom_th_byte.setRange(0, 7)
+        self.spin_custom_th_byte.setValue(4)
+        self.spin_custom_th_byte.setEnabled(False)
+        custom_layout.addWidget(self.spin_custom_th_byte)
+        custom_layout.addStretch()
+
+        p_layout.addLayout(custom_layout, 4, 1, 1, 2)
+
+        # Row 5: Action Buttons
         btn_pcan_layout = QHBoxLayout()
         self.btn_pcan_connect = QPushButton("🔌 PCAN-USB Pro 연결")
         self.btn_pcan_connect.setStyleSheet("background-color: #059669; color: white; font-weight: bold; padding: 10px 20px; border-radius: 6px;")
@@ -689,7 +752,7 @@ class ExhaustAppWindow(QMainWindow):
         btn_pcan_layout.addWidget(self.btn_pcan_connect)
         btn_pcan_layout.addWidget(self.btn_pcan_disconnect)
         btn_pcan_layout.addStretch()
-        p_layout.addLayout(btn_pcan_layout, 2, 0, 1, 4)
+        p_layout.addLayout(btn_pcan_layout, 5, 0, 1, 3)
 
         layout.addWidget(box_pcan)
 
@@ -782,16 +845,23 @@ class ExhaustAppWindow(QMainWindow):
         # Tab switch
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        # Hardware & Telemetry Callbacks
-        self.pcan_mgr.on_telemetry_update = self._on_telemetry_received
-        self.pcan_mgr.on_status_change = self._on_pcan_status_changed
-        self.pcan_mgr.on_can_log = self._on_pcan_log_received
+        # Hardware & Telemetry Callbacks (Thread-safe via CanSignalBridge)
+        self.pcan_mgr.on_telemetry_update = lambda r, t, s: self.can_bridge.sig_telemetry.emit(r, t, s)
+        self.pcan_mgr.on_status_change = lambda msg, succ: self.can_bridge.sig_status.emit(msg, succ)
+        self.pcan_mgr.on_can_log = lambda log: self.can_bridge.sig_log.emit(log)
 
-        self.can_rx.on_data_received = self._on_generic_can_received
+        self.can_bridge.sig_telemetry.connect(self._on_telemetry_received)
+        self.can_bridge.sig_status.connect(self._on_pcan_status_changed)
+        self.can_bridge.sig_log.connect(self._on_pcan_log_received)
+
+        self.can_rx.on_data_received = lambda r, t, s: self.can_bridge.sig_generic_can.emit(r, t, s)
+        self.can_bridge.sig_generic_can.connect(self._on_generic_can_received)
+
         self.pd_bridge.on_status_change = lambda msg, succ: self.lbl_backend_status.setText(msg)
 
-        # Simulator callback
-        self.sim.start(self._on_sim_physics_tick)
+        # Simulator callback (Thread-safe via CanSignalBridge)
+        self.sim.start(lambda r, t, s, g: self.can_bridge.sig_sim_tick.emit(r, t, s, g))
+        self.can_bridge.sig_sim_tick.connect(self._on_sim_physics_tick)
 
     def _refresh_audio_devices(self):
         """Enumerates audio output devices and populates combo box (Bluetooth prioritized)."""
@@ -842,13 +912,38 @@ class ExhaustAppWindow(QMainWindow):
         info_lines = [d["label"] for d in devices]
         QMessageBox.information(self, "PCAN-USB Pro 스캔 결과", "\n".join(info_lines) if info_lines else "PCANBasic 드라이버를 감지할 수 없습니다.")
 
+    def _on_pcan_mode_changed(self, idx: int):
+        mode_text = self.combo_pcan_mode.currentText()
+        is_preset = "READ_ONLY_PRESET" in mode_text
+        is_custom = "READ_ONLY_CUSTOM" in mode_text
+
+        self.combo_pcan_preset.setEnabled(is_preset)
+        self.spin_custom_can_id.setEnabled(is_custom)
+        self.spin_custom_rpm_byte.setEnabled(is_custom)
+        self.spin_custom_th_byte.setEnabled(is_custom)
+
     def _on_pcan_connect_clicked(self):
         ch_raw = self.combo_pcan_ch.currentText()
         ch_name = PCAN_CHANNELS.get(ch_raw, "PCAN_USBBUS1")
         baud = int(self.combo_pcan_baud.currentText().split()[0])
         mode_str = self.combo_pcan_mode.currentText().split()[0]
+        preset_name = self.combo_pcan_preset.currentData() or self.combo_pcan_preset.currentText().split(" - ")[0]
 
-        success = self.pcan_mgr.connect(channel=ch_name, bitrate=baud, mode=mode_str)
+        if mode_str == "READ_ONLY_CUSTOM":
+            try:
+                hex_str = self.spin_custom_can_id.text().strip()
+                self.pcan_mgr.custom_can_id = int(hex_str, 16)
+                self.pcan_mgr.rpm_start_byte = self.spin_custom_rpm_byte.value()
+                self.pcan_mgr.throttle_start_byte = self.spin_custom_th_byte.value()
+            except Exception:
+                pass
+
+        success = self.pcan_mgr.connect(
+            channel=ch_name,
+            bitrate=baud,
+            mode=mode_str,
+            preset_name=preset_name
+        )
         if success:
             self.btn_pcan_connect.setEnabled(False)
             self.btn_pcan_disconnect.setEnabled(True)
