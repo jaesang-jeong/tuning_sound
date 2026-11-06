@@ -31,3 +31,16 @@
    - `python -c "from app_gui import ExhaustAppWindow; ..."` → 오프스크린 GUI에서 FMOD 진단 라벨 및 새로고침 버튼 정상 연동 확인
 3. 미해결 / 제안:
    - FMOD 다운로드 폴더의 `api/core/lib/x64/fmod.dll` 파일을 복사하여 프로젝트 폴더에 덮어쓴 뒤 GUI의 새로고침 버튼 클릭 권장
+
+
+## 2026-11-06 21:10 — 계산된 엔진 부하값(Calculated Engine Load) 연동 및 명확화
+
+[DONE]
+1. 수정 파일:
+   - pcan_manager.py : `_obd_poll_worker`, `_rx_worker`, `__init__` : OBD-II PID 0x04 (Calculated Engine Load) 폴링 및 C-CAN 패킷 부하값 매핑 지원
+   - app_gui.py : `_build_drive_mode_tab`, `_on_ui_tick` : 텔레메트리 표시를 '엔진 부하(Load)'로 명확화
+2. 검증:
+   - `python -c "from pcan_manager import PcanManager; ..."` → OBD-II PID 0x04 (Calculated Engine Load 50.2%) 및 PID 0x0C (RPM 3000) 정상 디코딩 확인
+   - `python -m py_compile pcan_manager.py app_gui.py` → 정상 컴파일 확인
+3. 미해결 / 제안:
+   - 없음
