@@ -21,6 +21,7 @@ import math
 import time
 import random
 import threading
+from typing import Optional, List, Dict, Any
 import numpy as np
 import sounddevice as sd
 
@@ -248,6 +249,7 @@ class ExhaustSoundSynthesizer:
         # Audio Stream management
         self.stream = None
         self.is_running = False
+        self.output_device_index: Optional[int] = None
         self.lock = threading.Lock()
 
         # Monitoring waveform buffer (for GUI oscilloscope)
@@ -628,19 +630,84 @@ class ExhaustSoundSynthesizer:
         except Exception as e:
             outdata.fill(0)
 
+    @staticmethod
+    def get_output_devices() -> List[Dict[str, Any]]:
+        """Queries all audio output devices and highlights Bluetooth car audio devices."""
+        devices = []
+        try:
+            default_out = sd.default.device[1]
+            hostapis = sd.query_hostapis()
+            bt_keywords = ["bluetooth", "a2dp", "handsfree", " car", "car ", "차량", "무선", "wireless", "bt-"]
+
+            for idx, d in enumerate(sd.query_devices()):
+                if d.get("max_output_channels", 0) > 0:
+                    name = d.get("name", f"Device {idx}")
+                    name_lower = name.lower()
+                    host_name = hostapis[d["hostapi"]]["name"] if d.get("hostapi") < len(hostapis) else ""
+                    is_bt = any(k in name_lower for k in bt_keywords)
+                    is_def = (idx == default_out)
+
+                    label = name
+                    if is_bt:
+                        label = f"🚗 [블루투스 차량] {name}"
+                    elif is_def:
+                        label = f"⭐ [기본장치] {name}"
+                    label += f" ({host_name})"
+
+                    devices.append({
+                        "index": idx,
+                        "name": name,
+                        "label": label,
+                        "hostapi": host_name,
+                        "is_bluetooth": is_bt,
+                        "is_default": is_def,
+                        "max_channels": d.get("max_output_channels", 2)
+                    })
+        except Exception:
+            pass
+        return devices
+
+    def set_output_device(self, device_index: Optional[int]):
+        """Switches output audio device (e.g. to Bluetooth Car Audio)."""
+        if self.output_device_index == device_index:
+            return
+        was_running = self.is_running
+        self.stop()
+        self.output_device_index = device_index
+        if was_running:
+            self.start()
+
+    def set_buffer_size(self, buffer_size: int):
+        """Sets buffer size (512 ~ 4096) for Bluetooth latency/jitter compensation."""
+        if self.buffer_size == buffer_size:
+            return
+        was_running = self.is_running
+        self.stop()
+        self.buffer_size = buffer_size
+        if was_running:
+            self.start()
+
     def start(self):
         """Start low-latency audio stream."""
         if self.is_running:
             return
-        self.stream = sd.OutputStream(
-            samplerate=self.sample_rate,
-            blocksize=self.buffer_size,
-            channels=2,
-            dtype="float32",
-            callback=self._audio_callback,
-        )
-        self.stream.start()
-        self.is_running = True
+        try:
+            kwargs = {
+                "samplerate": self.sample_rate,
+                "blocksize": self.buffer_size,
+                "channels": 2,
+                "dtype": "float32",
+                "callback": self._audio_callback,
+            }
+            if self.output_device_index is not None:
+                kwargs["device"] = self.output_device_index
+
+            self.stream = sd.OutputStream(**kwargs)
+            self.stream.start()
+            self.is_running = True
+        except Exception as e:
+            self.is_running = False
+            print(f"Error starting audio stream: {e}")
 
     def stop(self):
         """Stop audio stream."""
@@ -648,8 +715,11 @@ class ExhaustSoundSynthesizer:
             return
         self.is_running = False
         if self.stream:
-            self.stream.stop()
-            self.stream.close()
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
             self.stream = None
 
 
