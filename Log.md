@@ -102,3 +102,18 @@
    - Git 커밋 `9bdb5bd` 원격 저장소 푸시 완료 (`https://github.com/jaesang-jeong/tuning_sound.git`)
 3. 미해결 / 제안:
    - 라즈베리파이에서 `bash optimize_boot.sh` 실행 후 `sudo reboot` 및 `systemd-analyze` 측정 권장
+
+
+## 2026-11-07 21:20 — 라즈베리파이(192.168.45.158) 원격 tuning_sound 배포 및 서비스 실행 완료
+
+[DONE]
+1. 수정 파일:
+   - 원격 라즈베리파이(`/home/jsjeong/active_sound` 및 심볼릭 링크 `~/jsjeong/active_sound`)에 tuning_sound 배포
+   - 계정 암호 `170213` 동기화 완료
+   - 시스템 의존성(PortAudio, can-utils, bluez, sounddevice, python-can) 설치 및 SocketCAN(500k Listen-Only) 설정 완료
+   - `tuning_sound.service` 등록 및 활성화(부팅 속도 최적화 제외)
+2. 검증:
+   - `ssh jsjeong@192.168.45.158` (암호 170213) 정상 인증 확인
+   - `systemctl status tuning_sound.service` → Active: active (running) 정상 구동 확인
+3. 미해결 / 제안:
+   - 차량 CAN 포트 또는 PCAN-USB Pro를 라즈베리파이에 연결하여 실차 10ms 배기음 동기화 테스트 권장
