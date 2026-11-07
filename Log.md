@@ -88,3 +88,17 @@
    - Git 커밋 `a3c6339` 원격 저장소 푸시 완료
 3. 미해결 / 제안:
    - 차량 내비게이션 기기등록 대기 상태에서 `bash bt_car_connect.sh` 실행 권장
+
+
+## 2026-11-07 10:02 — 라즈베리파이 3B 부팅 시간 초고속 단축(4~6초) 최적화
+
+[DONE]
+1. 수정 파일:
+   - tuning_sound.service : `[Unit]`, `[Service]` : 네트워크 대기(network.target) 의존성 제거 및 실시간 스케줄링(RR/Nice -20) 적용
+   - optimize_boot.sh : 전체 : 네트워크 온라인 대기 비활성화, 펌웨어 딜레이 제거, 불필요 서비스 비활성화, 파이썬 바이트코드 사전 컴파일 스크립트 작성
+   - revert_rpi.sh : [1/4] : 복구 시 unmask network-wait-online 로직 추가
+2. 검증:
+   - `bash -n optimize_boot.sh` 구문 검증 완료
+   - Git 커밋 `9bdb5bd` 원격 저장소 푸시 완료 (`https://github.com/jaesang-jeong/tuning_sound.git`)
+3. 미해결 / 제안:
+   - 라즈베리파이에서 `bash optimize_boot.sh` 실행 후 `sudo reboot` 및 `systemd-analyze` 측정 권장
