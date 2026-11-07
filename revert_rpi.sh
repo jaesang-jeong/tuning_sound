@@ -28,6 +28,14 @@ if [ -f /etc/systemd/system/tuning_sound.service ]; then
     echo "  • Removed /etc/systemd/system/tuning_sound.service"
 fi
 
+if [ -f /etc/systemd/system/bt_car_reconnect.service ]; then
+    sudo systemctl stop bt_car_reconnect.service 2>/dev/null || true
+    sudo systemctl disable bt_car_reconnect.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/bt_car_reconnect.service
+    sudo systemctl daemon-reload
+    echo "  • Removed /etc/systemd/system/bt_car_reconnect.service"
+fi
+
 # 2. Revert SocketCAN Configuration
 echo "[2/4] Removing SocketCAN persistent configuration..."
 if ip link show can0 2>/dev/null | grep -q "UP"; then

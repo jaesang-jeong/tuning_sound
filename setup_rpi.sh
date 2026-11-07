@@ -9,9 +9,10 @@ echo "🏎️  Raspberry Pi 3B Virtual Exhaust Sound System Setup"
 echo "=================================================================="
 
 # 1. Update & Install Core Dependencies
-echo "[1/4] Installing system dependencies (PortAudio, CAN utilities, NumPy)..."
+echo "[1/4] Installing system dependencies (PortAudio, CAN utilities, NumPy, Bluetooth)..."
 sudo apt-get update
-sudo apt-get install -y python3-pip python3-numpy libportaudio2 can-utils
+sudo apt-get install -y python3-pip python3-numpy libportaudio2 can-utils bluez bluez-tools
+sudo apt-get install -y libspa-0.2-bluetooth 2>/dev/null || sudo apt-get install -y pulseaudio-module-bluetooth 2>/dev/null || true
 
 # 2. Install Python Libraries
 echo "[2/4] Installing Python audio & CAN packages..."
