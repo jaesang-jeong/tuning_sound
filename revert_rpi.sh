@@ -36,6 +36,10 @@ if [ -f /etc/systemd/system/bt_car_reconnect.service ]; then
     echo "  • Removed /etc/systemd/system/bt_car_reconnect.service"
 fi
 
+# Unmask network wait-online if masked
+sudo systemctl unmask systemd-networkd-wait-online.service 2>/dev/null || true
+sudo systemctl unmask NetworkManager-wait-online.service 2>/dev/null || true
+
 # 2. Revert SocketCAN Configuration
 echo "[2/4] Removing SocketCAN persistent configuration..."
 if ip link show can0 2>/dev/null | grep -q "UP"; then

@@ -1,6 +1,7 @@
 [Unit]
 Description=Supercar Virtual Exhaust Sound Synthesizer Daemon
-After=sound.target network.target
+After=sound.target
+Wants=sound.target
 
 [Service]
 Type=simple
@@ -8,10 +9,12 @@ User=pi
 WorkingDirectory=/home/pi/tuning_sound
 ExecStart=/usr/bin/python3 /home/pi/tuning_sound/headless_engine.py
 Restart=always
-RestartSec=2
+RestartSec=1
 StandardOutput=journal
 StandardError=journal
-Nice=-10
+Nice=-20
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=50
 
 [Install]
 WantedBy=multi-user.target
